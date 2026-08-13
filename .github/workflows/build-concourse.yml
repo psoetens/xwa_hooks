@@ -35,7 +35,7 @@ jobs:
         run: msbuild xwa_hook_concourse\xwa_hook_concourse.sln /t:hook_concourse /p:Configuration=Release /p:Platform=x86 /m
 
       - name: Build hook_concourse_net (NativeAOT win-x86, via VS MSBuild)
-        run: msbuild xwa_hook_concourse\hook_concourse_net\hook_concourse_net\hook_concourse_net.csproj /p:Configuration=Release /m
+        run: msbuild xwa_hook_concourse\hook_concourse_net\hook_concourse_net\hook_concourse_net.csproj /restore /p:Configuration=Release /m
         continue-on-error: true
 
       - name: Collect built DLLs (exclude committed zip/ and intermediates)
