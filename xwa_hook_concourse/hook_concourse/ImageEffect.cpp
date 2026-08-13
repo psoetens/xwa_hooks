@@ -153,6 +153,30 @@ HRESULT ImageEffect::DrawImage(SurfaceDC* dc, ID3D11Texture2D* bitmap, const D2D
 	dc->d3d11Device->CreateShaderResourceView(bitmap, nullptr, &textureView);
 
 	D2D1_SIZE_U targetPx = { dc->width, dc->height };
+	// XWAU-on-Linux ultrawide fix: the concourse hook clamps dc->width to the 16:9
+	// width, but this effect renders into the FULL backbuffer render target. Using the
+	// clamped width for the NDC size + viewport + scissor left-anchors everything to a
+	// 16:9 slab on a wider (e.g. 21:9) backbuffer, cutting off the right side of the
+	// (correctly offset) content. Use the real render-target size instead (no-op when
+	// they already match, e.g. a 16:9 backbuffer).
+	if (dc->d3d11RenderTargetView != nullptr)
+	{
+		ID3D11Resource* rtRes = nullptr;
+		dc->d3d11RenderTargetView->GetResource(&rtRes);
+		if (rtRes != nullptr)
+		{
+			ID3D11Texture2D* rtTex = nullptr;
+			if (SUCCEEDED(rtRes->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&rtTex)) && rtTex != nullptr)
+			{
+				D3D11_TEXTURE2D_DESC rtDesc = {};
+				rtTex->GetDesc(&rtDesc);
+				if (rtDesc.Width > targetPx.width) targetPx.width = rtDesc.Width;
+				if (rtDesc.Height > targetPx.height) targetPx.height = rtDesc.Height;
+				rtTex->Release();
+			}
+			rtRes->Release();
+		}
+	}
 	if (targetPx.width == 0 || targetPx.height == 0) return hr;
 
 	D3D11_TEXTURE2D_DESC bitmapDesc{};
