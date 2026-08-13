@@ -1,0 +1,53 @@
+name: Build concourse hooks
+
+# Builds the two concourse hook DLLs on a Windows runner so the XWAU-on-Linux
+# effort can iterate on patches without a per-change round trip to the upstream
+# author. Native hook_concourse.dll = MSVC/MSBuild; hook_concourse_net.dll =
+# .NET 9 NativeAOT (win-x86). Artifacts are uploaded for download + drop-in test.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build native hook_concourse (MSVC, Win32/Release)
+        run: msbuild xwa_hook_concourse\xwa_hook_concourse.sln /t:hook_concourse /p:Configuration=Release /p:Platform=Win32 /m
+        continue-on-error: true
+
+      - name: Publish hook_concourse_net (NativeAOT, win-x86)
+        run: dotnet publish xwa_hook_concourse\hook_concourse_net\hook_concourse_net\hook_concourse_net.csproj -r win-x86 -c Release
+        continue-on-error: true
+
+      - name: Collect built DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Get-ChildItem -Recurse -Filter 'hook_concourse*.dll' |
+            Where-Object { $_.FullName -notmatch '\\(obj|out)\\' } |
+            ForEach-Object {
+              Write-Host "found: $($_.FullName)  ($($_.Length) bytes)"
+              Copy-Item $_.FullName -Destination "out\$($_.Name)" -Force
+            }
+          Write-Host "---- out ----"; Get-ChildItem out | Format-Table Name,Length
+        continue-on-error: true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concourse-dlls
+          path: out/**
+          if-no-files-found: warn
