@@ -25,6 +25,12 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: NuGet restore (packages.config SourceLink for the native vcxproj)
+        run: nuget restore xwa_hook_concourse\xwa_hook_concourse.sln
+
       - name: Build native hook_concourse (MSVC, solution platform x86)
         run: msbuild xwa_hook_concourse\xwa_hook_concourse.sln /t:hook_concourse /p:Configuration=Release /p:Platform=x86 /m
 
