@@ -339,6 +339,12 @@ namespace hook_32bpp_net
             return null;
         }
 
+        // Skins are decoded to full-size 32bpp images in parallel; each in-flight decode holds tens of MB
+        // of managed buffers. On 8 cores the default degree (one per core) made the .NET GC reserve so
+        // much of the 32-bit address space that the game ran out of memory on Linux/wine; two at a time
+        // showed no perceptible slowdown and a 4x smaller peak.
+        private const int SkinParallelism = 2;
+
         private static OptFile _tempOptFile;
         private static int _tempOptFileSize;
 
@@ -424,6 +430,13 @@ namespace hook_32bpp_net
 
             _tempOptFile = null;
             _tempOptFileSize = 0;
+
+            // The game now owns its copy of the OPT; every managed image buffer decoded above is garbage.
+            // Release the GC's memory to the OS right away instead of keeping the segments reserved:
+            // XWA is a 32-bit process, and reservations left behind here (measured: ~17 segments of
+            // 33-50 MB each per mission load) fragment the address space until later large allocations
+            // fail. Aggressive = compact everything and decommit/release as much as possible.
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         }
 
         private static void UpdateOptFile(string optName, OptFile opt, IList<string> objectLines, IList<string> baseSkins, int fgCount, bool hasDefaultSkin)
@@ -538,7 +551,7 @@ namespace hook_32bpp_net
             opt.Meshes
                 .SelectMany(t => t.Lods)
                 .SelectMany(t => t.FaceGroups)
-                .AsParallel()
+                .AsParallel().WithDegreeOfParallelism(SkinParallelism)
                 .ForAll(faceGroup =>
                 {
                     if (faceGroup.Textures.Count == 0)
@@ -583,7 +596,7 @@ namespace hook_32bpp_net
             var locatorsPath = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var filesSets = new ConcurrentDictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
 
-            distinctSkins.AsParallel().ForAll(skin =>
+            distinctSkins.AsParallel().WithDegreeOfParallelism(SkinParallelism).ForAll(skin =>
             {
                 string path = GetSkinDirectoryLocatorPath(optName, skin);
                 locatorsPath[skin] = path;
@@ -612,7 +625,7 @@ namespace hook_32bpp_net
                 filesSets[skin] = filesSet ?? new SortedSet<string>();
             });
 
-            opt.Textures.Where(texture => texture.Key.IndexOf("_fg_") != -1).AsParallel().ForAll(texture =>
+            opt.Textures.Where(texture => texture.Key.IndexOf("_fg_") != -1).AsParallel().WithDegreeOfParallelism(SkinParallelism).ForAll(texture =>
             {
                 int position = texture.Key.IndexOf("_fg_");
 
