@@ -35,11 +35,11 @@ jobs:
         run: msbuild xwa_hook_concourse\xwa_hook_concourse.sln /t:hook_concourse /p:Configuration=Release /p:Platform=x86 /m
 
       - name: Build hook_concourse_net (NativeAOT win-x86, via VS MSBuild)
-        run: msbuild xwa_hook_concourse\hook_concourse_net\hook_concourse_net\hook_concourse_net.csproj /restore /p:Configuration=Release /m
+        run: msbuild xwa_hook_concourse\hook_concourse_net\hook_concourse_net\hook_concourse_net.csproj /restore /t:Publish /p:Configuration=Release /p:RuntimeIdentifier=win-x86 /p:PublishAot=true /m
         continue-on-error: true
 
       - name: Build hook_32bpp_net (NativeAOT win-x86, via VS MSBuild)
-        run: msbuild xwa_hook_32bpp\hook_32bpp_net\hook_32bpp_net\hook_32bpp_net.csproj /restore /p:Configuration=Release /m
+        run: msbuild xwa_hook_32bpp\hook_32bpp_net\hook_32bpp_net\hook_32bpp_net.csproj /restore /t:Publish /p:Configuration=Release /p:RuntimeIdentifier=win-x86 /p:PublishAot=true /m
         continue-on-error: true
 
       - name: Collect built DLLs (exclude committed zip/ and intermediates)
@@ -47,8 +47,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          Get-ChildItem -Recurse -Include 'hook_concourse*.dll','hook_32bpp*.dll' |
-            Where-Object { $_.FullName -notmatch '\\(obj|zip|out)\\' } |
+          # NativeAOT output lives under ...\publish\ (or native\); the IL stub of the same name lives in
+          # bin\Release\net9.0\win-x86\. Copy everything, publish/native copies LAST so they win.
+          $all = Get-ChildItem -Recurse -Include 'hook_concourse*.dll','hook_32bpp*.dll' |
+            Where-Object { $_.FullName -notmatch '\\(obj|zip|out)\\' }
+          $all | Sort-Object { $_.FullName -match '\\(publish|native)\\' } |
             ForEach-Object {
               Write-Host "found: $($_.FullName)  ($($_.Length) bytes)"
               Copy-Item $_.FullName -Destination "out\$($_.Name)" -Force
