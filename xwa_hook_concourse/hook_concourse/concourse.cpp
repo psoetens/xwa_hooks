@@ -656,6 +656,12 @@ void CleanEffects()
 	//OutputDebugString(__FUNCTION__);
 }
 
+// Textures at or above this many pixels are created empty and uploaded in bands of this many bytes.
+static const size_t kBandedUploadPixels = 2048 * 1024;   // 8 MB at 32 bpp
+static const size_t kBandedUploadBytes  = 2 * 1024 * 1024;
+
+void UpdateBitmap(SurfaceDC* dc, ID3D11Texture2D* bitmap, void* data, int dataWidth, int dataHeight, int imageFormat);
+
 ID3D11Texture2D* CreateBitmap(
 	SurfaceDC* dc,
 	void* data,
@@ -690,7 +696,19 @@ ID3D11Texture2D* CreateBitmap(
 		textureData.SysMemPitch = width * 4;
 		textureData.SysMemSlicePitch = 0;
 
-		hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		// Large textures: create empty and upload in bands (see the 32 bpp path for why).
+		if ((size_t)width * height >= kBandedUploadPixels)
+		{
+			hr = dc->d3d11Device->CreateTexture2D(&textureDesc, nullptr, &dataBitmap);
+			if (SUCCEEDED(hr) && dataBitmap != nullptr)
+			{
+				UpdateBitmap(dc, dataBitmap, data, dataWidth, dataHeight, imageFormat);
+			}
+		}
+		else
+		{
+			hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		}
 	}
 	else
 	{
@@ -713,7 +731,23 @@ ID3D11Texture2D* CreateBitmap(
 		textureData.SysMemPitch = dataWidth * 4;
 		textureData.SysMemSlicePitch = 0;
 
-		hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		// Large textures: create the texture empty and upload it in row bands. Creating it with
+		// initial data makes the D3D11 runtime stage the whole image in one host allocation: for a
+		// 4338x3299 concourse backdrop that is a 57 MB contiguous block, which a fragmented 32-bit
+		// address space cannot provide after a few missions (observed: CreateTexture2D failing every
+		// frame). Banded UpdateSubresource calls need only a few MB at a time.
+		if ((size_t)dataWidth * dataHeight >= kBandedUploadPixels)
+		{
+			hr = dc->d3d11Device->CreateTexture2D(&textureDesc, nullptr, &dataBitmap);
+			if (SUCCEEDED(hr) && dataBitmap != nullptr)
+			{
+				UpdateBitmap(dc, dataBitmap, data, dataWidth, dataHeight, imageFormat);
+			}
+		}
+		else
+		{
+			hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		}
 	}
 
 	if (FAILED(hr) || dataBitmap == nullptr)
@@ -737,20 +771,36 @@ void UpdateBitmap(
 	int dataHeight,
 	int imageFormat)
 {
+	// Upload in row bands so the runtime never needs to stage the whole image in one host
+	// allocation (see CreateBitmap). Bands are sized to ~2 MB of source data.
 	if (imageFormat == 28)
 	{
-		// BC3
-
+		// BC3: 4x4 blocks, 16 bytes per block => one block row of `width` pixels is width * 4 bytes.
 		int width = (dataWidth + 3) / 4 * 4;
 		int height = (dataHeight + 3) / 4 * 4;
+		int blockRowsTotal = height / 4;
+		int blockRowsPerBand = max(1, (int)(kBandedUploadBytes / (size_t)(width * 4)));
 
-		dc->d3d11DeviceContext->UpdateSubresource(bitmap, 0, nullptr, data, width * 4, 0);
+		for (int blockRow = 0; blockRow < blockRowsTotal; blockRow += blockRowsPerBand)
+		{
+			int rows = min(blockRowsPerBand, blockRowsTotal - blockRow);
+			D3D11_BOX box{ 0, (UINT)(blockRow * 4), 0, (UINT)width, (UINT)((blockRow + rows) * 4), 1 };
+			const unsigned char* src = (const unsigned char*)data + (size_t)blockRow * width * 4;
+			dc->d3d11DeviceContext->UpdateSubresource(bitmap, 0, &box, src, width * 4, 0);
+		}
 	}
 	else
 	{
 		// 32 bpp
+		int rowsPerBand = max(1, (int)(kBandedUploadBytes / (size_t)(dataWidth * 4)));
 
-		dc->d3d11DeviceContext->UpdateSubresource(bitmap, 0, nullptr, data, dataWidth * 4, 0);
+		for (int row = 0; row < dataHeight; row += rowsPerBand)
+		{
+			int rows = min(rowsPerBand, dataHeight - row);
+			D3D11_BOX box{ 0, (UINT)row, 0, (UINT)dataWidth, (UINT)(row + rows), 1 };
+			const unsigned char* src = (const unsigned char*)data + (size_t)row * dataWidth * 4;
+			dc->d3d11DeviceContext->UpdateSubresource(bitmap, 0, &box, src, dataWidth * 4, 0);
+		}
 	}
 }
 
