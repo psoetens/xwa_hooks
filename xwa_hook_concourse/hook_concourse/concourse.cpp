@@ -663,7 +663,8 @@ ID3D11Texture2D* CreateBitmap(
 	int dataHeight,
 	int imageFormat)
 {
-	ID3D11Texture2D* dataBitmap;
+	ID3D11Texture2D* dataBitmap = nullptr;
+	HRESULT hr = S_OK;
 
 	if (imageFormat == 28)
 	{
@@ -689,7 +690,7 @@ ID3D11Texture2D* CreateBitmap(
 		textureData.SysMemPitch = width * 4;
 		textureData.SysMemSlicePitch = 0;
 
-		HRESULT hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
 	}
 	else
 	{
@@ -712,7 +713,17 @@ ID3D11Texture2D* CreateBitmap(
 		textureData.SysMemPitch = dataWidth * 4;
 		textureData.SysMemSlicePitch = 0;
 
-		HRESULT hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+		hr = dc->d3d11Device->CreateTexture2D(&textureDesc, &textureData, &dataBitmap);
+	}
+
+	if (FAILED(hr) || dataBitmap == nullptr)
+	{
+		// Texture creation can fail (e.g. E_OUTOFMEMORY in a fragmented 32-bit address space).
+		// Report it and hand back a null the callers must check, instead of a dangling pointer.
+		char msg[160];
+		sprintf_s(msg, "[CONCOURSE] CreateTexture2D failed hr=0x%08X (%dx%d, format %d)", (unsigned)hr, dataWidth, dataHeight, imageFormat);
+		OutputDebugString(msg);
+		return nullptr;
 	}
 
 	return dataBitmap;
@@ -789,7 +800,11 @@ void DrawSurfaceDelegate(
 		{
 			dataBitmap = CreateBitmap(dc, data, dataWidth, dataHeight, imageFormat);
 
-			g_videoBitmaps.insert(std::make_pair(key, dataBitmap));
+			// Only cache a real texture: a cached null would be dereferenced on every later frame.
+			if (dataBitmap != nullptr)
+			{
+				g_videoBitmaps.insert(std::make_pair(key, dataBitmap));
+			}
 		}
 	}
 	else
@@ -804,8 +819,18 @@ void DrawSurfaceDelegate(
 		{
 			dataBitmap = CreateBitmap(dc, data, dataWidth, dataHeight, imageFormat);
 
-			g_dataBitmaps.insert(std::make_pair(data, dataBitmap));
+			// Only cache a real texture: a cached null would be dereferenced on every later frame.
+			if (dataBitmap != nullptr)
+			{
+				g_dataBitmaps.insert(std::make_pair(data, dataBitmap));
+			}
 		}
+	}
+
+	if (dataBitmap == nullptr)
+	{
+		// Creation failed this frame: skip this surface rather than crash; it is retried next frame.
+		return;
 	}
 
 	int offsetX = (g_screenWidth - dc->width) / 2;

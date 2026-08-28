@@ -142,6 +142,12 @@ HRESULT ImageEffect::DrawImage(SurfaceDC* dc, ID3D11Texture2D* bitmap, const D2D
 {
 	HRESULT hr = S_OK;
 
+	if (bitmap == nullptr)
+	{
+		// A failed texture creation upstream must not become a null dereference here.
+		return E_INVALIDARG;
+	}
+
 	D3D11_SHADER_RESOURCE_VIEW_DESC textureViewDesc{};
 	textureViewDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	textureViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
