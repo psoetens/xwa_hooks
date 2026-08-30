@@ -165,22 +165,23 @@ HRESULT ImageEffect::DrawImage(SurfaceDC* dc, ID3D11Texture2D* bitmap, const D2D
 	// 16:9 slab on a wider (e.g. 21:9) backbuffer, cutting off the right side of the
 	// (correctly offset) content. Use the real render-target size instead (no-op when
 	// they already match, e.g. a 16:9 backbuffer).
-	if (dc->d3d11RenderTargetView != nullptr)
+	if (dc->d3d11RenderTargetView)
 	{
-		ID3D11Resource* rtRes = nullptr;
+		ComPtr<ID3D11Resource> rtRes;
 		dc->d3d11RenderTargetView->GetResource(&rtRes);
-		if (rtRes != nullptr)
+
+		if (rtRes)
 		{
-			ID3D11Texture2D* rtTex = nullptr;
-			if (SUCCEEDED(rtRes->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&rtTex)) && rtTex != nullptr)
+			ComPtr<ID3D11Texture2D> rtTex;
+
+			if (SUCCEEDED(rtRes.As(&rtTex)) && rtTex)
 			{
-				D3D11_TEXTURE2D_DESC rtDesc = {};
+				D3D11_TEXTURE2D_DESC rtDesc{};
 				rtTex->GetDesc(&rtDesc);
+
 				if (rtDesc.Width > targetPx.width) targetPx.width = rtDesc.Width;
 				if (rtDesc.Height > targetPx.height) targetPx.height = rtDesc.Height;
-				rtTex->Release();
 			}
-			rtRes->Release();
 		}
 	}
 	if (targetPx.width == 0 || targetPx.height == 0) return hr;
